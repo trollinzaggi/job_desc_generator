@@ -537,44 +537,56 @@ class StructureAnalyzer:
         """Print human-readable structure analysis report."""
         consistency = self.measure_consistency()
         
+        if not consistency:
+            print("No JDs have been parsed. Run parse_corpus() first.")
+            return
+        
         print("=" * 60)
         print("JD STRUCTURAL CONSISTENCY REPORT")
         print("=" * 60)
         
-        print(f"\nTotal JDs Analyzed: {consistency['total_jds']}")
+        print(f"\nTotal JDs Analyzed: {consistency.get('total_jds', 0)}")
         
-        stats = consistency["num_sections_stats"]
-        print(f"\nSections per JD:")
-        print(f"  Min: {stats['min']}, Max: {stats['max']}")
-        print(f"  Mean: {stats['mean']}, Median: {stats['median']}")
+        stats = consistency.get("num_sections_stats", {})
+        if stats:
+            print(f"\nSections per JD:")
+            print(f"  Min: {stats.get('min', 'N/A')}, Max: {stats.get('max', 'N/A')}")
+            print(f"  Mean: {stats.get('mean', 'N/A')}, Median: {stats.get('median', 'N/A')}")
         
-        print(f"\nUnique Structure Patterns: {consistency['unique_structures']}")
-        print(f"Top Pattern Coverage: {consistency['top_structure_coverage']:.1%}")
+        print(f"\nUnique Structure Patterns: {consistency.get('unique_structures', 0)}")
+        print(f"Top Pattern Coverage: {consistency.get('top_structure_coverage', 0):.1%}")
         
-        print("\nTOP 5 STRUCTURE PATTERNS")
-        print("-" * 40)
-        for pattern, count in consistency["top_5_structures"]:
-            pct = count / consistency["total_jds"] * 100
-            pattern_str = " → ".join(pattern) if pattern else "(no sections)"
-            print(f"  [{count:4d}] ({pct:5.1f}%) {pattern_str}")
+        top_structures = consistency.get("top_5_structures", [])
+        if top_structures:
+            print("\nTOP 5 STRUCTURE PATTERNS")
+            print("-" * 40)
+            total_jds = consistency.get('total_jds', 1)
+            for pattern, count in top_structures:
+                pct = count / total_jds * 100
+                pattern_str = " -> ".join(pattern) if pattern else "(no sections)"
+                print(f"  [{count:4d}] ({pct:5.1f}%) {pattern_str}")
         
-        print("\nSECTION COVERAGE")
-        print("-" * 40)
-        for section, coverage in consistency["section_coverage"].items():
-            bar_filled = int(coverage * 20)
-            bar = "#" * bar_filled + "." * (20 - bar_filled)
-            print(f"  {section:25} [{bar}] {coverage:.1%}")
+        section_coverage = consistency.get("section_coverage", {})
+        if section_coverage:
+            print("\nSECTION COVERAGE")
+            print("-" * 40)
+            for section, coverage in section_coverage.items():
+                bar_filled = int(coverage * 20)
+                bar = "#" * bar_filled + "." * (20 - bar_filled)
+                print(f"  {section:25} [{bar}] {coverage:.1%}")
         
-        print("\nEXPECTED SECTIONS COVERAGE")
-        print("-" * 40)
-        for section, coverage in consistency["expected_sections_coverage"].items():
-            if coverage > 0.7:
-                status = "[OK]  "
-            elif coverage > 0.4:
-                status = "[WARN]"
-            else:
-                status = "[MISS]"
-            print(f"  {status} {section:25} {coverage:.1%}")
+        expected_coverage = consistency.get("expected_sections_coverage", {})
+        if expected_coverage:
+            print("\nEXPECTED SECTIONS COVERAGE")
+            print("-" * 40)
+            for section, coverage in expected_coverage.items():
+                if coverage > 0.7:
+                    status = "[OK]  "
+                elif coverage > 0.4:
+                    status = "[WARN]"
+                else:
+                    status = "[MISS]"
+                print(f"  {status} {section:25} {coverage:.1%}")
     
     def export_parsed_jds(self, output_path: str = "parsed_jd_structures.json") -> None:
         """Export parsed structures to JSON."""

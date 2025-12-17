@@ -400,9 +400,12 @@ class QualityEvaluator:
         
         count = 0
         for record in data:
-            jd_id = record["jd_data"].get(self.id_field)
-            if jd_id and record.get("evaluation"):
-                self.evaluations[str(jd_id)] = QualityRubric.from_dict(record["evaluation"])
+            jd_data = record.get("jd_data", {})
+            jd_id = jd_data.get(self.id_field)
+            evaluation = record.get("evaluation")
+            
+            if jd_id and evaluation:
+                self.evaluations[str(jd_id)] = QualityRubric.from_dict(evaluation)
                 count += 1
         
         print(f"Imported {count} evaluations")
@@ -419,23 +422,25 @@ class QualityEvaluator:
                 continue
             
             # Check if any evaluation was done
-            if pd.isna(row.get("eval_completeness")) and pd.isna(row.get("eval_overall_score")):
+            eval_completeness = row.get("eval_completeness")
+            eval_overall = row.get("eval_overall_score")
+            if pd.isna(eval_completeness) and pd.isna(eval_overall):
                 continue
             
             rubric = QualityRubric(
-                completeness=int(row["eval_completeness"]) if pd.notna(row.get("eval_completeness")) else None,
-                completeness_notes=str(row.get("eval_completeness_notes", "")),
-                clarity=int(row["eval_clarity"]) if pd.notna(row.get("eval_clarity")) else None,
-                clarity_notes=str(row.get("eval_clarity_notes", "")),
-                specificity=int(row["eval_specificity"]) if pd.notna(row.get("eval_specificity")) else None,
-                specificity_notes=str(row.get("eval_specificity_notes", "")),
-                compliance=int(row["eval_compliance"]) if pd.notna(row.get("eval_compliance")) else None,
-                compliance_notes=str(row.get("eval_compliance_notes", "")),
-                actionability=int(row["eval_actionability"]) if pd.notna(row.get("eval_actionability")) else None,
-                actionability_notes=str(row.get("eval_actionability_notes", "")),
-                overall_score=int(row["eval_overall_score"]) if pd.notna(row.get("eval_overall_score")) else None,
-                overall_notes=str(row.get("eval_overall_notes", "")),
-                is_gold_standard=str(row.get("eval_is_gold_standard", "")).upper() == "TRUE",
+                completeness=int(eval_completeness) if pd.notna(eval_completeness) else None,
+                completeness_notes=str(row.get("eval_completeness_notes") or ""),
+                clarity=int(row.get("eval_clarity")) if pd.notna(row.get("eval_clarity")) else None,
+                clarity_notes=str(row.get("eval_clarity_notes") or ""),
+                specificity=int(row.get("eval_specificity")) if pd.notna(row.get("eval_specificity")) else None,
+                specificity_notes=str(row.get("eval_specificity_notes") or ""),
+                compliance=int(row.get("eval_compliance")) if pd.notna(row.get("eval_compliance")) else None,
+                compliance_notes=str(row.get("eval_compliance_notes") or ""),
+                actionability=int(row.get("eval_actionability")) if pd.notna(row.get("eval_actionability")) else None,
+                actionability_notes=str(row.get("eval_actionability_notes") or ""),
+                overall_score=int(eval_overall) if pd.notna(eval_overall) else None,
+                overall_notes=str(row.get("eval_overall_notes") or ""),
+                is_gold_standard=str(row.get("eval_is_gold_standard") or "").upper() == "TRUE",
             )
             
             self.evaluations[str(jd_id)] = rubric
@@ -642,67 +647,82 @@ class QualityEvaluator:
         print("JD QUALITY BASELINE REPORT")
         print("=" * 60)
         
-        print(f"\nTotal JDs Evaluated: {results['total_evaluated']}")
-        print(f"Gold Standard JDs: {results['gold_standard_count']}")
+        print(f"\nTotal JDs Evaluated: {results.get('total_evaluated', 0)}")
+        print(f"Gold Standard JDs: {results.get('gold_standard_count', 0)}")
         
-        print("\nOVERALL QUALITY SCORES (1-5 scale)")
-        print("-" * 40)
-        for dim, score in results["overall_stats"].items():
-            dim_name = dim.replace("mean_", "").replace("_", " ").title()
-            if score:
-                bar_filled = int(score)
-                bar = "#" * bar_filled + "." * (5 - bar_filled)
-                print(f"  {dim_name:20} [{bar}] {score:.2f}")
+        overall_stats = results.get("overall_stats", {})
+        if overall_stats:
+            print("\nOVERALL QUALITY SCORES (1-5 scale)")
+            print("-" * 40)
+            for dim, score in overall_stats.items():
+                dim_name = dim.replace("mean_", "").replace("_", " ").title()
+                if score:
+                    bar_filled = int(score)
+                    bar = "#" * bar_filled + "." * (5 - bar_filled)
+                    print(f"  {dim_name:20} [{bar}] {score:.2f}")
         
-        if results.get("problem_areas"):
-            print(f"\n  [WARNING] Problem Areas (score < 3.0): {', '.join(results['problem_areas'])}")
+        problem_areas = results.get("problem_areas", [])
+        if problem_areas:
+            print(f"\n  [WARNING] Problem Areas (score < 3.0): {', '.join(problem_areas)}")
         
-        if "quality_by_org_unit" in results:
+        quality_by_org = results.get("quality_by_org_unit")
+        if quality_by_org:
             print("\nQUALITY BY ORG UNIT")
             print("-" * 40)
-            means = results["quality_by_org_unit"].get("mean", {})
-            counts = results["quality_by_org_unit"].get("count", {})
-            for org in sorted(means.keys(), key=lambda x: means[x], reverse=True)[:10]:
-                print(f"  {org:30} {means[org]:.2f} (n={counts[org]})")
+            means = quality_by_org.get("mean", {})
+            counts = quality_by_org.get("count", {})
+            for org in sorted(means.keys(), key=lambda x: means.get(x, 0), reverse=True)[:10]:
+                org_mean = means.get(org)
+                org_count = counts.get(org, 0)
+                if org_mean is not None:
+                    print(f"  {org:30} {org_mean:.2f} (n={org_count})")
         
-        if "quality_by_level" in results:
+        quality_by_level = results.get("quality_by_level")
+        if quality_by_level:
             print("\nQUALITY BY LEVEL")
             print("-" * 40)
-            means = results["quality_by_level"].get("mean", {})
-            counts = results["quality_by_level"].get("count", {})
+            means = quality_by_level.get("mean", {})
+            counts = quality_by_level.get("count", {})
             for level in sorted(means.keys(), key=lambda x: means.get(x, 0), reverse=True):
-                if means.get(level):
-                    print(f"  {level:30} {means[level]:.2f} (n={counts[level]})")
+                level_mean = means.get(level)
+                level_count = counts.get(level, 0)
+                if level_mean is not None:
+                    print(f"  {level:30} {level_mean:.2f} (n={level_count})")
         
         # Recency analysis
-        if "quality_by_recency" in results:
-            recency = results["quality_by_recency"]
+        recency = results.get("quality_by_recency")
+        if recency:
             print("\nQUALITY BY RECENCY")
             print("-" * 40)
             
-            if "date_range" in recency:
-                print(f"  Date range: {recency['date_range']['earliest']} to {recency['date_range']['latest']}")
+            date_range = recency.get("date_range", {})
+            if date_range:
+                earliest = date_range.get("earliest", "N/A")
+                latest = date_range.get("latest", "N/A")
+                print(f"  Date range: {earliest} to {latest}")
             
-            if "trend_comparison" in recency:
-                trend = recency["trend_comparison"]
-                print(f"\n  Recent JDs (n={trend['recent_count']}): {trend['recent_mean']:.2f}")
-                print(f"  Older JDs (n={trend['older_count']}):  {trend['older_mean']:.2f}")
-                print(f"  Trend: {trend['trend'].upper()} ({trend['difference']:+.2f})")
+            trend = recency.get("trend_comparison")
+            if trend:
+                print(f"\n  Recent JDs (n={trend.get('recent_count', 0)}): {trend.get('recent_mean', 0):.2f}")
+                print(f"  Older JDs (n={trend.get('older_count', 0)}):  {trend.get('older_mean', 0):.2f}")
+                print(f"  Trend: {trend.get('trend', 'unknown').upper()} ({trend.get('difference', 0):+.2f})")
             
-            if "correlation" in recency:
-                corr = recency["correlation"]
-                print(f"\n  Correlation coefficient: {corr['coefficient']}")
-                print(f"  Interpretation: {corr['interpretation']}")
+            corr = recency.get("correlation")
+            if corr:
+                print(f"\n  Correlation coefficient: {corr.get('coefficient', 'N/A')}")
+                print(f"  Interpretation: {corr.get('interpretation', 'N/A')}")
             
-            if "by_quarter" in recency:
+            by_quarter = recency.get("by_quarter")
+            if by_quarter:
                 print("\n  By Quarter:")
-                for period, stats in sorted(recency["by_quarter"].items()):
-                    print(f"    {period}: {stats['mean']:.2f} (n={stats['count']})")
+                for period, stats in sorted(by_quarter.items()):
+                    print(f"    {period}: {stats.get('mean', 0):.2f} (n={stats.get('count', 0)})")
         
-        if results["gold_standard_ids"]:
+        gold_ids = results.get("gold_standard_ids", [])
+        if gold_ids:
             print(f"\nGOLD STANDARD JD IDs:")
             print("-" * 40)
-            for jd_id in results["gold_standard_ids"][:10]:
+            for jd_id in gold_ids[:10]:
                 print(f"  - {jd_id}")
     
     def get_gold_standard_jds(self) -> pd.DataFrame:

@@ -107,9 +107,13 @@ class SchemaDiscovery:
             
             field_name = field_path.split(".")[-1] if "." in field_path else field_path
             types_str = ", ".join(sorted(stats["types"]))
-            null_info = f" (null: {stats['null_rate']:.1%})" if stats["null_count"] > 0 else ""
             
-            lines.append(f"{prefix}├── {field_name}: {types_str}{null_info}")
+            null_info = ""
+            if stats["null_count"] > 0 and stats["count"] > 0:
+                null_rate = stats["null_count"] / stats["count"]
+                null_info = f" (null: {null_rate:.1%})"
+            
+            lines.append(f"{prefix}|-- {field_name}: {types_str}{null_info}")
         
         return "\n".join(lines)
     

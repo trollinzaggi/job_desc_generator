@@ -754,6 +754,10 @@ class ClusterAnalyzer:
         """Print human-readable cluster analysis report."""
         composition = self.analyze_cluster_composition(metadata_fields)
         
+        if not composition:
+            print("No clusters to analyze.")
+            return
+        
         print("=" * 60)
         print("CLUSTER COMPOSITION REPORT")
         print("=" * 60)
@@ -762,22 +766,31 @@ class ClusterAnalyzer:
             print(f"\n{'='*40}")
             print(f"CLUSTER {cluster_id}")
             print(f"{'='*40}")
-            print(f"Size: {analysis['size']} JDs ({analysis['percentage']}%)")
+            print(f"Size: {analysis.get('size', 0)} JDs ({analysis.get('percentage', 0)}%)")
             
             for field, field_analysis in analysis.items():
                 if field in ["size", "percentage"]:
                     continue
                 
-                print(f"\n{field.upper()}:")
-                if field_analysis.get("dominant"):
-                    print(f"  Dominant: {field_analysis['dominant']} ({field_analysis['dominant_pct']}%)")
-                else:
-                    print(f"  No dominant value (top: {field_analysis['dominant_pct']}%)")
+                if not isinstance(field_analysis, dict):
+                    continue
                 
-                print(f"  Unique values: {field_analysis['unique_values']}")
-                print("  Top values:")
-                for value, count in list(field_analysis["top_values"].items())[:3]:
-                    print(f"    - {value}: {count}")
+                print(f"\n{field.upper()}:")
+                dominant = field_analysis.get("dominant")
+                dominant_pct = field_analysis.get("dominant_pct", 0)
+                
+                if dominant:
+                    print(f"  Dominant: {dominant} ({dominant_pct}%)")
+                else:
+                    print(f"  No dominant value (top: {dominant_pct}%)")
+                
+                print(f"  Unique values: {field_analysis.get('unique_values', 0)}")
+                
+                top_values = field_analysis.get("top_values", {})
+                if top_values:
+                    print("  Top values:")
+                    for value, count in list(top_values.items())[:3]:
+                        print(f"    - {value}: {count}")
     
     def export_results(self, output_dir: str = "cluster_analysis") -> None:
         """Export cluster analysis results to files."""
