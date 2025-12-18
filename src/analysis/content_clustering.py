@@ -60,102 +60,77 @@ class SectionEmbeddings:
 
 class EmbeddingGenerator:
     """
-    Generate embeddings for JD text.
-    
-    Supports:
-    - Full JD embeddings
-    - Section-level embeddings (from parsed JDStructure objects)
-    
-    Providers:
-    - sentence-transformers (local)
-    - OpenAI (API)
-    - Cohere (API)
+    Generate embeddings for JD text using Azure OpenAI.
     """
     
     def __init__(
         self,
-        provider: str = "sentence-transformers",
-        model_name: Optional[str] = None,
+        deployment_name: str,
+        azure_endpoint: Optional[str] = None,
         api_key: Optional[str] = None,
+        api_version: str = "2024-02-01",
     ):
         """
         Initialize embedding generator.
         
         Args:
-            provider: One of "sentence-transformers", "openai", "cohere"
-            model_name: Model to use (provider-specific)
-            api_key: API key for OpenAI/Cohere
+            deployment_name: Azure OpenAI deployment name (required)
+            azure_endpoint: Azure OpenAI endpoint URL (or set AZURE_OPENAI_ENDPOINT env var)
+            api_key: API key (or set AZURE_OPENAI_API_KEY env var)
+            api_version: Azure OpenAI API version
+        
+        Example:
+            generator = EmbeddingGenerator(
+                deployment_name="text-embedding-ada-002",
+                azure_endpoint="https://your-resource.openai.azure.com",
+                api_key="your-api-key",
+            )
         """
-        self.provider = provider
-        self.model_name = model_name
-        self.api_key = api_key
-        self._model = None
+        import os
         
-        # Default models
-        if model_name is None:
-            defaults = {
-                "sentence-transformers": "all-MiniLM-L6-v2",
-                "openai": "text-embedding-3-small",
-                "cohere": "embed-english-v3.0",
-            }
-            self.model_name = defaults.get(provider, "all-MiniLM-L6-v2")
+        self.deployment_name = deployment_name
+        self.api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+        self.azure_endpoint = azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        self.api_version = api_version or os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+        self._client = None
+        
+        if not self.api_key:
+            raise ValueError(
+                "API key required. Pass api_key or set AZURE_OPENAI_API_KEY env var."
+            )
+        if not self.azure_endpoint:
+            raise ValueError(
+                "Endpoint required. Pass azure_endpoint or set AZURE_OPENAI_ENDPOINT env var."
+            )
     
-    def _load_model(self):
-        """Lazy load the embedding model."""
-        if self._model is not None:
-            return self._model
-        
-        if self.provider == "sentence-transformers":
+    def _get_client(self):
+        """Lazy load the Azure OpenAI client."""
+        if self._client is None:
             try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError:
-                raise ImportError(
-                    "sentence-transformers required. "
-                    "Install with: pip install sentence-transformers"
-                )
-            self._model = SentenceTransformer(self.model_name)
-        
-        elif self.provider == "openai":
-            try:
-                from openai import OpenAI
+                from openai import AzureOpenAI
             except ImportError:
                 raise ImportError("openai required. Install with: pip install openai")
             
-            import os
-            api_key = self.api_key or os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OpenAI API key required")
-            self._model = OpenAI(api_key=api_key)
-        
-        elif self.provider == "cohere":
-            try:
-                import cohere
-            except ImportError:
-                raise ImportError("cohere required. Install with: pip install cohere")
-            
-            import os
-            api_key = self.api_key or os.environ.get("COHERE_API_KEY")
-            if not api_key:
-                raise ValueError("Cohere API key required")
-            self._model = cohere.Client(api_key)
-        
-        else:
-            raise ValueError(f"Unknown provider: {self.provider}")
-        
-        return self._model
+            self._client = AzureOpenAI(
+                api_key=self.api_key,
+                api_version=self.api_version,
+                azure_endpoint=self.azure_endpoint,
+            )
+        return self._client
     
-    def embed(self, texts: List[str], show_progress: bool = True) -> np.ndarray:
+    def embed(self, texts: List[str], show_progress: bool = True, batch_size: int = 100) -> np.ndarray:
         """
         Generate embeddings for a list of texts.
         
         Args:
             texts: List of text strings
             show_progress: Print progress updates
+            batch_size: Number of texts per API call
             
         Returns:
             numpy array of shape (n_texts, embedding_dim)
         """
-        model = self._load_model()
+        client = self._get_client()
         
         # Filter out empty texts
         valid_indices = [i for i, t in enumerate(texts) if t and len(t.strip()) > 0]
@@ -164,42 +139,22 @@ class EmbeddingGenerator:
         if not valid_texts:
             raise ValueError("No valid texts to embed")
         
-        if self.provider == "sentence-transformers":
-            valid_embeddings = model.encode(
-                valid_texts,
-                show_progress_bar=show_progress,
-                convert_to_numpy=True,
+        valid_embeddings = []
+        total_batches = (len(valid_texts) + batch_size - 1) // batch_size
+        
+        for i in range(0, len(valid_texts), batch_size):
+            if show_progress:
+                print(f"Embedding batch {i//batch_size + 1}/{total_batches}")
+            
+            batch = valid_texts[i:i + batch_size]
+            response = client.embeddings.create(
+                input=batch,
+                model=self.deployment_name,
             )
+            batch_embeddings = [e.embedding for e in response.data]
+            valid_embeddings.extend(batch_embeddings)
         
-        elif self.provider == "openai":
-            valid_embeddings = []
-            batch_size = 100
-            for i in range(0, len(valid_texts), batch_size):
-                if show_progress:
-                    print(f"Embedding batch {i//batch_size + 1}/{(len(valid_texts) + batch_size - 1)//batch_size}")
-                batch = valid_texts[i:i + batch_size]
-                response = model.embeddings.create(
-                    input=batch,
-                    model=self.model_name,
-                )
-                batch_embeddings = [e.embedding for e in response.data]
-                valid_embeddings.extend(batch_embeddings)
-            valid_embeddings = np.array(valid_embeddings)
-        
-        elif self.provider == "cohere":
-            valid_embeddings = []
-            batch_size = 96  # Cohere limit
-            for i in range(0, len(valid_texts), batch_size):
-                if show_progress:
-                    print(f"Embedding batch {i//batch_size + 1}/{(len(valid_texts) + batch_size - 1)//batch_size}")
-                batch = valid_texts[i:i + batch_size]
-                response = model.embed(
-                    texts=batch,
-                    model=self.model_name,
-                    input_type="search_document",
-                )
-                valid_embeddings.extend(response.embeddings)
-            valid_embeddings = np.array(valid_embeddings)
+        valid_embeddings = np.array(valid_embeddings)
         
         # If all texts were valid, return directly
         if len(valid_indices) == len(texts):
@@ -792,10 +747,22 @@ class ClusterAnalyzer:
                     for value, count in list(top_values.items())[:3]:
                         print(f"    - {value}: {count}")
     
-    def export_results(self, output_dir: str = "cluster_analysis") -> None:
-        """Export cluster analysis results to files."""
-        output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
+    def export_results(self, output_dir: Optional[str] = None) -> None:
+        """Export cluster analysis results to files.
+        
+        Args:
+            output_dir: Directory to save results. If None, uses OUTPUT_CONFIG from config.py
+        """
+        if output_dir is None:
+            try:
+                from config import get_phase_output_path
+                output_path = get_phase_output_path("phase_1_3_clustering")
+            except ImportError:
+                output_path = Path("cluster_analysis")
+        else:
+            output_path = Path(output_dir)
+        
+        output_path.mkdir(parents=True, exist_ok=True)
         
         # Cluster assignments
         self.df[["jd_id", "cluster"]].to_csv(

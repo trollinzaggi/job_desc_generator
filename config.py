@@ -15,6 +15,7 @@ See docs/FIELD_MAPPING.md for detailed documentation.
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 from src.data_loaders import FieldMapping
 
@@ -250,3 +251,102 @@ COSMOS_CONFIG = {
     "key_env": "COSMOS_KEY",
     "connection_string_env": "COSMOS_CONNECTION_STRING",
 }
+
+
+# =============================================================================
+# PART 4: OUTPUT CONFIGURATION
+# =============================================================================
+
+OUTPUT_CONFIG = {
+    # Root directory for all analysis outputs
+    "root_dir": "analysis_output",
+    
+    # Subdirectories for each phase (relative to root_dir)
+    "schema_discovery": "schema_discovery",
+    "phase_1_1_quality": "phase_1_1_quality",
+    "phase_1_2_structure": "phase_1_2_structure",
+    "phase_1_3_clustering": "phase_1_3_clustering",
+}
+
+
+def get_output_path(*subdirs: str) -> Path:
+    """
+    Get output path relative to the configured root directory.
+    
+    Args:
+        *subdirs: Subdirectory names to append to root
+        
+    Returns:
+        Path object for the output location
+        
+    Usage:
+        from config import get_output_path
+        
+        # Get root output directory
+        root = get_output_path()
+        
+        # Get phase-specific directory
+        phase_dir = get_output_path("phase_1_1_quality")
+        
+        # Get specific file path
+        file_path = get_output_path("phase_1_1_quality", "results.json")
+    """
+    root = Path(OUTPUT_CONFIG["root_dir"])
+    
+    if subdirs:
+        return root.joinpath(*subdirs)
+    return root
+
+
+def get_phase_output_path(phase: str) -> Path:
+    """
+    Get output path for a specific analysis phase.
+    
+    Args:
+        phase: One of "schema_discovery", "phase_1_1_quality", 
+               "phase_1_2_structure", "phase_1_3_clustering"
+               
+    Returns:
+        Path object for the phase output directory
+    """
+    root = Path(OUTPUT_CONFIG["root_dir"])
+    subdir = OUTPUT_CONFIG.get(phase, phase)
+    return root / subdir
+
+
+# =============================================================================
+# PART 5: EMBEDDING CONFIGURATION (Azure OpenAI)
+# =============================================================================
+
+EMBEDDING_CONFIG = {
+    # Your Azure OpenAI deployment name for embeddings (REQUIRED)
+    "deployment_name": None,  # e.g., "text-embedding-ada-002"
+    
+    # Azure endpoint (or set AZURE_OPENAI_ENDPOINT env var)
+    "azure_endpoint": None,  # e.g., "https://your-resource.openai.azure.com"
+    
+    # API key (or set AZURE_OPENAI_API_KEY env var)
+    "api_key": None,
+    
+    # API version
+    "api_version": "2024-02-01",
+}
+
+
+def get_embedding_generator():
+    """
+    Factory function to create an EmbeddingGenerator from config.
+    
+    Usage:
+        from config import get_embedding_generator
+        generator = get_embedding_generator()
+        embeddings = generator.embed(["text1", "text2"])
+    """
+    from src.analysis.content_clustering import EmbeddingGenerator
+    
+    return EmbeddingGenerator(
+        deployment_name=EMBEDDING_CONFIG["deployment_name"],
+        azure_endpoint=EMBEDDING_CONFIG.get("azure_endpoint"),
+        api_key=EMBEDDING_CONFIG.get("api_key"),
+        api_version=EMBEDDING_CONFIG.get("api_version", "2024-02-01"),
+    )

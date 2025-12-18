@@ -23,12 +23,18 @@ from src.analysis import (
     DataCleaner,
     QualityEvaluator,
     StructureAnalyzer,
-    EmbeddingGenerator,
     ContentClusterer,
     ClusterAnalyzer,
     create_visualization_data,
 )
-from config import JSON_CONFIG, JD_FIELD_MAPPING, ANALYSIS_CONFIG
+from config import (
+    JSON_CONFIG, 
+    JD_FIELD_MAPPING, 
+    ANALYSIS_CONFIG,
+    OUTPUT_CONFIG,
+    get_output_path,
+    get_phase_output_path,
+)
 
 
 # Constants
@@ -98,9 +104,14 @@ def run_schema_discovery():
     for field, path in schema.suggest_field_mapping().items():
         print(f"    {field}: \"{path}\"")
     
-    with open("schema_discovery_output.json", "w") as f:
+    # Use configured output path
+    output_dir = get_phase_output_path("schema_discovery")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    output_file = output_dir / "schema_discovery_output.json"
+    with open(output_file, "w") as f:
         f.write(schema.to_json(indent=2))
-    print("\nSchema exported to: schema_discovery_output.json")
+    print(f"\nSchema exported to: {output_file}")
 
 
 def load_and_clean_data():
@@ -163,7 +174,7 @@ def create_evaluator(df):
     )
 
 
-def run_phase_1_1(df, output_dir: Path):
+def run_phase_1_1(df):
     """Phase 1.1: JD Quality Baseline"""
     print("\n" + "=" * 60)
     print("PHASE 1.1: JD QUALITY BASELINE")
@@ -187,7 +198,7 @@ def run_phase_1_1(df, output_dir: Path):
     
     print(f"Created sample of {len(sample)} JDs")
     
-    phase_dir = output_dir / "phase_1_1_quality"
+    phase_dir = get_phase_output_path("phase_1_1_quality")
     phase_dir.mkdir(parents=True, exist_ok=True)
     
     export_fields = [ANALYSIS_CONFIG.id_field, ANALYSIS_CONFIG.primary_text_field]
@@ -211,7 +222,7 @@ def run_phase_1_1(df, output_dir: Path):
     print("3. Run: python run_analysis.py --analyze-quality")
 
 
-def run_phase_1_2(df, output_dir: Path):
+def run_phase_1_2(df):
     """Phase 1.2: JD Structural Consistency"""
     print("\n" + "=" * 60)
     print("PHASE 1.2: JD STRUCTURAL CONSISTENCY")
@@ -231,7 +242,7 @@ def run_phase_1_2(df, output_dir: Path):
     structure_clusters = analyzer.cluster_by_structure(n_clusters=5)
     print(f"\nStructure clustering silhouette: {structure_clusters['silhouette_score']}")
     
-    phase_dir = output_dir / "phase_1_2_structure"
+    phase_dir = get_phase_output_path("phase_1_2_structure")
     phase_dir.mkdir(parents=True, exist_ok=True)
     
     analyzer.export_parsed_jds(str(phase_dir / "parsed_jd_structures.json"))
@@ -263,18 +274,21 @@ def run_phase_1_2(df, output_dir: Path):
     return parsed_jds
 
 
-def run_phase_1_3(df, output_dir: Path, embedding_provider: str = "sentence-transformers", parsed_jds=None):
+def run_phase_1_3(df, parsed_jds=None):
     """Phase 1.3: JD Content Clustering"""
     print("\n" + "=" * 60)
     print("PHASE 1.3: JD CONTENT CLUSTERING")
     print("=" * 60)
     
-    phase_dir = output_dir / "phase_1_3_clustering"
+    phase_dir = get_phase_output_path("phase_1_3_clustering")
     phase_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"\nEmbedding text field: {ANALYSIS_CONFIG.primary_text_field}")
     
-    embedder = EmbeddingGenerator(provider=embedding_provider)
+    # Import embedding config
+    from config import get_embedding_generator
+    embedder = get_embedding_generator()
+    
     embeddings, ids = embedder.embed_dataframe(
         df, 
         text_field=ANALYSIS_CONFIG.primary_text_field,
@@ -402,9 +416,9 @@ def run_section_level_clustering(embedder, parsed_jds, phase_dir: Path):
         print(f"    Silhouette: {section_result.silhouette_score:.4f}")
 
 
-def analyze_imported_quality(output_dir: Path):
+def analyze_imported_quality():
     """Import and analyze completed quality evaluations."""
-    phase_dir = output_dir / "phase_1_1_quality"
+    phase_dir = get_phase_output_path("phase_1_1_quality")
     csv_path = phase_dir / "jd_quality_evaluation.csv"
     
     if not csv_path.exists():
@@ -443,20 +457,21 @@ def main():
     parser.add_argument("--phase", choices=["1.1", "1.2", "1.3"], help="Run specific phase")
     parser.add_argument("--all", action="store_true", help="Run all phases")
     parser.add_argument("--analyze-quality", action="store_true", help="Import quality evaluations")
-    parser.add_argument("-o", "--output", default="analysis_output", help="Output directory")
-    parser.add_argument("--embedding-provider", default="sentence-transformers",
-                       choices=["sentence-transformers", "openai", "cohere"])
     
     args = parser.parse_args()
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Ensure output root directory exists
+    output_root = get_output_path()
+    output_root.mkdir(parents=True, exist_ok=True)
+    
+    print(f"[CONFIG] Output directory: {output_root.absolute()}")
     
     if args.discover:
         run_schema_discovery()
         return
     
     if args.analyze_quality:
-        analyze_imported_quality(output_dir)
+        analyze_imported_quality()
         return
     
     if args.phase or args.all:
@@ -467,30 +482,34 @@ def main():
         parsed_jds = None
         
         if args.phase == "1.1" or args.all:
-            run_phase_1_1(df, output_dir)
+            run_phase_1_1(df)
         
         if args.phase == "1.2" or args.all:
-            parsed_jds = run_phase_1_2(df, output_dir)
+            parsed_jds = run_phase_1_2(df)
         
         if args.phase == "1.3" or args.all:
-            run_phase_1_3(df, output_dir, args.embedding_provider, parsed_jds)
+            run_phase_1_3(df, parsed_jds)
         
         print("\n" + "=" * 60)
         print("ANALYSIS COMPLETE")
         print("=" * 60)
+        print(f"\nResults saved to: {output_root.absolute()}")
         return
     
     parser.print_help()
     print("\n" + "=" * 60)
     print("QUICK START")
     print("=" * 60)
-    print("""
+    print(f"""
 1. Put JSON files in jd_data/
 2. Discover schema:     python run_analysis.py --discover
 3. Edit config.py:
    - Set JD_FIELD_MAPPING with your field paths
    - Set ANALYSIS_CONFIG with your analysis preferences
+   - Set OUTPUT_CONFIG["root_dir"] for output location
 4. Run analysis:        python run_analysis.py --all
+
+Current output directory: {OUTPUT_CONFIG['root_dir']}
 """)
 
 

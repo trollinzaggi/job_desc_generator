@@ -451,15 +451,23 @@ class CorpusAnalyzer:
     # STEP 6: Export Results
     # =========================================================================
     
-    def export_results(self, output_dir: str = "analysis_output") -> None:
+    def export_results(self, output_dir: Optional[str] = None) -> None:
         """
         Export analysis results to files.
         
         Args:
-            output_dir: Directory to save results
+            output_dir: Directory to save results. If None, uses OUTPUT_CONFIG from config.py
         """
-        output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
+        if output_dir is None:
+            try:
+                from config import get_output_path
+                output_path = get_output_path()
+            except ImportError:
+                output_path = Path("analysis_output")
+        else:
+            output_path = Path(output_dir)
+        
+        output_path.mkdir(parents=True, exist_ok=True)
         
         # Export cleaning stats
         if self.cleaning_stats:
