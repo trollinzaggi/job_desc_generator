@@ -350,3 +350,76 @@ def get_embedding_generator():
         api_key=EMBEDDING_CONFIG.get("api_key"),
         api_version=EMBEDDING_CONFIG.get("api_version", "2024-02-01"),
     )
+
+
+# =============================================================================
+# PART 6: CHAT/LLM CONFIGURATION (Azure OpenAI - for extraction & naming)
+# =============================================================================
+
+CHAT_CONFIG = {
+    # Your Azure OpenAI deployment name for chat/completions (REQUIRED for archetype pipeline)
+    "deployment_name": None,  # e.g., "gpt-4o", "gpt-4-turbo"
+    
+    # Azure endpoint (or set AZURE_OPENAI_ENDPOINT env var)
+    # Can be same as EMBEDDING_CONFIG if using same resource
+    "azure_endpoint": None,
+    
+    # API key (or set AZURE_OPENAI_API_KEY env var)
+    "api_key": None,
+    
+    # API version
+    "api_version": "2024-02-01",
+}
+
+
+# =============================================================================
+# PART 7: ARCHETYPE PIPELINE CONFIGURATION
+# =============================================================================
+
+ARCHETYPE_CONFIG = {
+    # Output subdirectory for archetype pipeline (relative to OUTPUT_CONFIG root_dir)
+    "output_subdir": "archetypes",
+    
+    # Extraction settings
+    "extraction": {
+        # Fields to extract from (from your JD_FIELD_MAPPING)
+        "job_description_field": "jd_text",
+        "expertise_field": None,  # e.g., "expertise" if you have it
+        "team_description_field": None,  # e.g., "team_description"
+        
+        # Metadata fields to capture with extraction
+        "metadata_fields": ["title", "level", "division", "function", "org_unit"],
+    },
+    
+    # Clustering settings
+    "clustering": {
+        "algorithm": "hdbscan",
+        "min_cluster_size": 5,
+        "min_samples": 3,
+    },
+    
+    # Feature engineering default
+    "features": {
+        "approach": "skills_only",  # "skills_only", "contextual", "structured"
+        "include_division": False,
+        "include_function": False,
+    },
+}
+
+
+def get_archetype_output_path(*subdirs: str) -> Path:
+    """
+    Get output path for archetype pipeline.
+    
+    Args:
+        *subdirs: Additional subdirectories
+        
+    Returns:
+        Path object
+    """
+    root = Path(OUTPUT_CONFIG["root_dir"])
+    archetype_dir = root / ARCHETYPE_CONFIG["output_subdir"]
+    
+    if subdirs:
+        return archetype_dir.joinpath(*subdirs)
+    return archetype_dir
