@@ -53,14 +53,21 @@ JD_FIELD_MAPPING = FieldMapping(
     # Add any additional fields you want available for analysis.
     # These become columns in your DataFrame.
     #
+    # Format: "column_name": "source.json.path"
+    #
     # Examples:
-    #   "jd_expertise": "content.expertise_section",
-    #   "jd_min_requirements": "content.minimum_requirements",
+    #   "expertise": "role.expertise",              # For archetype extraction
+    #   "team_desc": "role.teamDescription",        # For archetype extraction  
     #   "rank": "metadata.employee_rank",
     #   "hiring_manager": "metadata.manager_name",
     #   "salary_band": "compensation.band",
+    #
+    # Then reference column names in ARCHETYPE_CONFIG:
+    #   "expertise_field": "expertise"   (NOT "role.expertise")
     custom_fields={
-        # Add your custom fields here
+        # Add your custom fields here, e.g.:
+        # "expertise": "role.expertise",
+        # "team_desc": "role.teamDescription",
     }
 )
 
@@ -382,12 +389,21 @@ ARCHETYPE_CONFIG = {
     
     # Extraction settings
     "extraction": {
-        # Fields to extract from (from your JD_FIELD_MAPPING)
+        # Fields to extract from - use the COLUMN NAMES from your DataFrame
+        # (These are the attribute names in JD_FIELD_MAPPING, NOT the source JSON paths)
+        #
+        # Example: If JD_FIELD_MAPPING has:
+        #   team_description="role.teamDescription"  
+        # Then use:
+        #   "team_description_field": "team_description"  (the column name)
+        # NOT:
+        #   "team_description_field": "role.teamDescription"  (wrong - this is JSON path)
+        #
         "job_description_field": "jd_text",
-        "expertise_field": None,  # e.g., "expertise" if you have it
-        "team_description_field": None,  # e.g., "team_description"
+        "expertise_field": None,           # Column name, e.g., "expertise" 
+        "team_description_field": None,    # Column name, e.g., "team_description"
         
-        # Metadata fields to capture with extraction
+        # Metadata fields to capture with extraction (column names)
         "metadata_fields": ["title", "level", "division", "function", "org_unit"],
     },
     

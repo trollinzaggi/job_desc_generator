@@ -74,7 +74,7 @@ def load_data():
 def run_extraction(df: pd.DataFrame, output_dir: Path, args):
     """Phase 1: Extract requirements from JDs."""
     from src.archetypes import RequirementExtractor
-    from config import ANALYSIS_CONFIG
+    from config import ANALYSIS_CONFIG, ARCHETYPE_CONFIG
     
     print("\n" + "="*60)
     print("PHASE 1: REQUIREMENT EXTRACTION")
@@ -83,38 +83,65 @@ def run_extraction(df: pd.DataFrame, output_dir: Path, args):
     output_path = output_dir / "phase_1_extraction"
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Check for existing extraction
+    # Check for existing extraction (only skip if not force AND all complete)
     extraction_file = output_path / "extracted_requirements.json"
     if extraction_file.exists() and not args.force:
-        print(f"  Found existing extraction: {extraction_file}")
-        print("  Use --force to re-extract")
-        return RequirementExtractor.load_results(str(extraction_file))
+        existing = RequirementExtractor.load_results(str(extraction_file))
+        if len(existing) >= len(df):
+            print(f"  Found complete extraction: {extraction_file} ({len(existing)} JDs)")
+            print("  Use --force to re-extract")
+            return existing
+        else:
+            print(f"  Found partial extraction: {len(existing)}/{len(df)} JDs")
+            print("  Will resume extraction...")
     
     # Get field names from config
     jd_id_field = ANALYSIS_CONFIG.id_field
     jd_text_field = ANALYSIS_CONFIG.primary_text_field
     
-    # Try to find expertise and team description fields
-    expertise_field = None
-    team_desc_field = None
+    # Get extraction settings from ARCHETYPE_CONFIG
+    extraction_config = ARCHETYPE_CONFIG.get("extraction", {})
     
-    for field in df.columns:
-        if "expertise" in field.lower():
-            expertise_field = field
-        if "team" in field.lower() and "desc" in field.lower():
-            team_desc_field = field
+    # Get expertise and team description fields from config
+    expertise_field = extraction_config.get("expertise_field")
+    team_desc_field = extraction_config.get("team_description_field")
     
-    # Metadata fields to capture
-    metadata_fields = [
-        f for f in ["title", "level", "division", "function", "org_unit", "department"]
-        if f in df.columns
-    ]
+    # Validate fields exist in DataFrame
+    if expertise_field and expertise_field not in df.columns:
+        print(f"  ⚠️ Warning: expertise_field '{expertise_field}' not found in DataFrame")
+        expertise_field = None
     
-    print(f"  ID field: {jd_id_field}")
+    if team_desc_field and team_desc_field not in df.columns:
+        print(f"  ⚠️ Warning: team_description_field '{team_desc_field}' not found in DataFrame")
+        team_desc_field = None
+    
+    # Fallback: auto-detect if not configured
+    if expertise_field is None:
+        for field in df.columns:
+            if "expertise" in field.lower():
+                expertise_field = field
+                break
+    
+    if team_desc_field is None:
+        for field in df.columns:
+            if "team" in field.lower() and "desc" in field.lower():
+                team_desc_field = field
+                break
+    
+    # Get metadata fields from config, or use defaults
+    configured_metadata = extraction_config.get("metadata_fields", 
+        ["title", "level", "division", "function", "org_unit", "department"]
+    )
+    metadata_fields = [f for f in configured_metadata if f in df.columns]
+    
+    # Debug: show available columns
+    print(f"\n  Available DataFrame columns: {list(df.columns)}")
+    print(f"\n  ID field: {jd_id_field}")
     print(f"  Text field: {jd_text_field}")
     print(f"  Expertise field: {expertise_field}")
     print(f"  Team description field: {team_desc_field}")
     print(f"  Metadata fields: {metadata_fields}")
+    print(f"  Parallel workers: {args.workers}")
     
     # Initialize extractor
     extractor = RequirementExtractor()
@@ -129,6 +156,8 @@ def run_extraction(df: pd.DataFrame, output_dir: Path, args):
         metadata_fields=metadata_fields,
         output_path=str(extraction_file),
         save_interval=50,
+        max_workers=args.workers,
+        resume=not args.force,
     )
     
     # Summary
@@ -143,6 +172,7 @@ def run_features(extractions, output_dir: Path, args):
     """Phase 2: Build features for clustering."""
     from src.archetypes import FeatureEngineer, FeatureConfig, FeatureApproach
     from src.archetypes.feature_engineering import get_experiment_configs
+    from config import ARCHETYPE_CONFIG
     
     print("\n" + "="*60)
     print("PHASE 2: FEATURE ENGINEERING")
@@ -164,13 +194,46 @@ def run_features(extractions, output_dir: Path, args):
         )
         return feature_outputs
     else:
-        # Run single configuration (default: skills only)
+        # Get feature settings from config
+        feature_config = ARCHETYPE_CONFIG.get("features", {})
+        approach_str = feature_config.get("approach", "skills_only")
+        include_division = feature_config.get("include_division", False)
+        include_function = feature_config.get("include_function", False)
+        
+        # Map string to enum
+        approach_map = {
+            "skills_only": FeatureApproach.SKILLS_ONLY,
+            "contextual": FeatureApproach.CONTEXTUAL,
+            "structured": FeatureApproach.STRUCTURED,
+        }
+        approach = approach_map.get(approach_str, FeatureApproach.SKILLS_ONLY)
+        
+        # Build categorical/context fields based on config
+        categorical_fields = []
+        context_fields = []
+        if include_division:
+            categorical_fields.append("division")
+            context_fields.append("division")
+        if include_function:
+            categorical_fields.append("function")
+            context_fields.append("function")
+        
+        # Create config
         config = FeatureConfig(
-            approach=FeatureApproach.SKILLS_ONLY,
+            approach=approach,
             experiment_id="default",
+            categorical_fields=categorical_fields if categorical_fields else ["division"],
+            context_fields=context_fields if context_fields else ["division"],
         )
         
-        print(f"  Building features with approach: {config.approach.value}")
+        print(f"  Approach: {approach.value}")
+        print(f"  Include division: {include_division}")
+        print(f"  Include function: {include_function}")
+        
+        # For skills_only, division/function don't matter
+        if approach == FeatureApproach.SKILLS_ONLY:
+            print("  (division/function not used in skills_only approach)")
+        
         output = engineer.build_features(extractions, config)
         output.save(str(output_path / "default"))
         
@@ -366,6 +429,7 @@ def main():
     parser.add_argument("--experiments", action="store_true", help="Run experiment matrix")
     parser.add_argument("--force", action="store_true", help="Force re-run even if outputs exist")
     parser.add_argument("--output", "-o", type=str, help="Output directory")
+    parser.add_argument("--workers", "-w", type=int, default=5, help="Parallel workers for extraction (default: 5)")
     
     args = parser.parse_args()
     

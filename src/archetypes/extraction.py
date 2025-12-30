@@ -473,6 +473,8 @@ class RequirementExtractor:
         show_progress: bool = True,
         save_interval: int = 50,
         output_path: Optional[str] = None,
+        max_workers: int = 1,
+        resume: bool = True,
     ) -> List[ExtractionResult]:
         """
         Extract requirements from a batch of JDs.
@@ -487,19 +489,34 @@ class RequirementExtractor:
             show_progress: Print progress updates
             save_interval: Save intermediate results every N records
             output_path: Path to save intermediate/final results
+            max_workers: Number of parallel workers (1=sequential, >1=parallel)
+            resume: If True, skip JDs that were already extracted (requires output_path)
             
         Returns:
             List of ExtractionResult objects
         """
-        results = []
-        total = len(df)
+        # Load existing results for resume
+        existing_results = {}
+        if resume and output_path and Path(output_path).exists():
+            try:
+                existing = self.load_results(output_path)
+                existing_results = {r.jd_id: r for r in existing}
+                if show_progress:
+                    print(f"  Resuming: found {len(existing_results)} existing extractions")
+            except Exception as e:
+                if show_progress:
+                    print(f"  Could not load existing results: {e}")
         
+        # Prepare extraction tasks
+        tasks = []
         for idx, row in df.iterrows():
-            if show_progress and (idx + 1) % 10 == 0:
-                print(f"Extracting {idx + 1}/{total}...")
+            jd_id = str(row[jd_id_field])
+            
+            # Skip if already extracted
+            if jd_id in existing_results:
+                continue
             
             # Get text fields
-            jd_id = str(row[jd_id_field])
             job_description = str(row.get(job_description_field, ""))
             expertise = str(row.get(expertise_field, "")) if expertise_field else ""
             team_description = str(row.get(team_description_field, "")) if team_description_field else ""
@@ -507,31 +524,126 @@ class RequirementExtractor:
             # Build metadata
             metadata = {}
             if metadata_fields:
-                for field in metadata_fields:
-                    if field in row:
-                        metadata[field] = row[field]
+                for fld in metadata_fields:
+                    if fld in row:
+                        metadata[fld] = row[fld]
             
-            # Extract
-            result = self.extract_single(
-                jd_id=jd_id,
-                job_description=job_description,
-                expertise=expertise,
-                team_description=team_description,
-                metadata=metadata,
-            )
+            tasks.append({
+                "jd_id": jd_id,
+                "job_description": job_description,
+                "expertise": expertise,
+                "team_description": team_description,
+                "metadata": metadata,
+            })
+        
+        if show_progress:
+            print(f"  Extracting {len(tasks)} JDs (skipped {len(existing_results)} existing)")
+        
+        if not tasks:
+            return list(existing_results.values())
+        
+        # Process tasks
+        new_results = []
+        
+        if max_workers <= 1:
+            # Sequential processing
+            new_results = self._extract_sequential(tasks, show_progress, save_interval, output_path, existing_results)
+        else:
+            # Parallel processing
+            new_results = self._extract_parallel(tasks, max_workers, show_progress, save_interval, output_path, existing_results)
+        
+        # Combine with existing results
+        all_results = list(existing_results.values()) + new_results
+        
+        # Save final results
+        if output_path:
+            self._save_results(all_results, output_path)
+        
+        if show_progress:
+            successful = sum(1 for r in all_results if r.extraction_success)
+            print(f"\nExtraction complete: {successful}/{len(all_results)} successful")
+        
+        return all_results
+    
+    def _extract_sequential(
+        self,
+        tasks: List[Dict],
+        show_progress: bool,
+        save_interval: int,
+        output_path: Optional[str],
+        existing_results: Dict[str, ExtractionResult],
+    ) -> List[ExtractionResult]:
+        """Sequential extraction."""
+        results = []
+        total = len(tasks)
+        
+        for idx, task in enumerate(tasks):
+            if show_progress and (idx + 1) % 10 == 0:
+                print(f"  Extracting {idx + 1}/{total}...")
+            
+            result = self.extract_single(**task)
             results.append(result)
             
             # Save intermediate results
             if output_path and save_interval and (idx + 1) % save_interval == 0:
-                self._save_results(results, output_path)
+                all_so_far = list(existing_results.values()) + results
+                self._save_results(all_so_far, output_path)
         
-        # Save final results
-        if output_path:
-            self._save_results(results, output_path)
+        return results
+    
+    def _extract_parallel(
+        self,
+        tasks: List[Dict],
+        max_workers: int,
+        show_progress: bool,
+        save_interval: int,
+        output_path: Optional[str],
+        existing_results: Dict[str, ExtractionResult],
+    ) -> List[ExtractionResult]:
+        """Parallel extraction using ThreadPoolExecutor."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        
+        results = []
+        results_lock = threading.Lock()
+        total = len(tasks)
+        completed = 0
         
         if show_progress:
-            successful = sum(1 for r in results if r.extraction_success)
-            print(f"\nExtraction complete: {successful}/{total} successful")
+            print(f"  Using {max_workers} parallel workers...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {
+                executor.submit(self.extract_single, **task): task
+                for task in tasks
+            }
+            
+            # Process as they complete
+            for future in as_completed(future_to_task):
+                try:
+                    result = future.result()
+                except Exception as e:
+                    task = future_to_task[future]
+                    result = ExtractionResult(
+                        jd_id=task["jd_id"],
+                        metadata=task.get("metadata", {}),
+                        extraction_model=self.model_name,
+                        extraction_success=False,
+                        extraction_error=str(e),
+                    )
+                
+                with results_lock:
+                    results.append(result)
+                    completed += 1
+                    
+                    if show_progress and completed % 10 == 0:
+                        print(f"  Completed {completed}/{total}...")
+                    
+                    # Save intermediate results
+                    if output_path and save_interval and completed % save_interval == 0:
+                        all_so_far = list(existing_results.values()) + results
+                        self._save_results(all_so_far, output_path)
         
         return results
     
